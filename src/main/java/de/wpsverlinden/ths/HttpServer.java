@@ -20,12 +20,19 @@ package de.wpsverlinden.ths;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class HttpServer {
 
-    private int port;
-    private ServerSocket socket;
-    private boolean shutdown = false;
+    private static final Logger log = Logger.getLogger(HttpServer.class.getName());
+
+    private final int port;
+    private ServerSocket listenSocket;
+    private volatile boolean shutdownRequested = false;
 
     public HttpServer(int port) throws ServerInitException {
         this.port = port;
@@ -33,31 +40,40 @@ public class HttpServer {
     }
 
     private void initializeServer() throws ServerInitException {
+        log.log(Level.INFO, "Initializing server on port {0}", port);
         try {
-            socket = new ServerSocket(port);
-        } catch (IOException e) {
+            listenSocket = new ServerSocket(port);
+        } catch (IllegalArgumentException | IOException e) {
             throw new ServerInitException(e.getMessage());
         }
-        System.out.println("Initialisation complete, listening for incoming connectionson port " + port);
     }
 
     public void listen() {
-
-        Socket client;
-        while (!shutdown) {
+        ExecutorService executor = Executors.newCachedThreadPool();
+        Socket client = null;
+        while (!shutdownRequested) {
             try {
-                client = socket.accept();
-                Thread requestProcessor = new Thread(new RequestProcessor(client));
-                requestProcessor.start();
+                client = listenSocket.accept();
+                executor.submit(new RequestProcessor(client));
             } catch (IOException e) {
-                System.err.println(e.getMessage());
+                log.log(Level.SEVERE, e.getMessage());
             }
+        }
+        executor.shutdown();
+        try {
+            executor.awaitTermination(1, TimeUnit.SECONDS);
+        } catch (InterruptedException ex) {
+            log.log(Level.SEVERE, ex.getMessage());
         }
     }
 
-    public void shutdown() throws IOException {
-        System.out.print("Server shutdown requested...");
-        socket.close();
-        shutdown = true;
+    public void shutdown() {
+        log.log(Level.INFO, "Server shutdown requested...");
+        try {
+            listenSocket.close(); //Causes listenSocket.accept() throw a SocketException
+        } catch (IOException ex) {
+            log.log(Level.SEVERE, ex.getMessage());
+        }
+        shutdownRequested = true;
     }
 }
